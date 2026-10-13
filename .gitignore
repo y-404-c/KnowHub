@@ -1,0 +1,73 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.local
+.pytest_cache/
+.mypy_cache/
+node_modules/
+.next/
+out/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+data/chroma/
+data/uploads/
+data/eval/results/
+data/*.pkl
+data/*.db
+*.log
+# 误提交过的 uvicorn 运行日志 (本地启动重定向产物)
+uvicorn.err
+uvicorn.out
+data/history/
+data/bm25_*.pkl
+data/chroma/
+data/uploads/
+data/files/
+data/unikb.db
+backend/data/
+
+# HuggingFace 模型缓存（绕开杀软拦截用户目录写入时放这里的，1GB+ 别进版本库）
+backend/.hf-cache/
+
+# 本地模型目录（tools/fetch_models.py 的下载产物，1.2GB 不进版本库）
+backend/models/
+
+# WorkBuddy 项目内存/缓存（含本地笔记，不要进版本库）
+.workbuddy/
+
+# 本地 UI 预览截图（本地排错用，不进版本库）
+ui_preview/
+
+# 测试覆盖率数据（本地产物，不是源码）
+.coverage
+.coverage.*
+htmlcov/
+
+# 测试/构建临时产物（上游曾误提交 backend/pytest-of-48055 等 87 个文件，勿再入库）
+backend/pytest-of-*/
+backend/pytest-cache-files-*/
+backend/unikb_testdata_*/
+backend/pip-*/
+backend/torchinductor_*/
+backend/tmp*/
+
+# 个人求职/面试材料（与 KnowHub 项目无关，且本仓库是公开的，不进版本库）
+outputs/internship_detailed.html
+outputs/interview_qa_detailed.html
+outputs/interview_self_intro_qa.html
+outputs/jd_interview_prep.html
+
+# Playwright 演示录屏产物（webm 体积大，不进版本库；录屏脚本本身保留可复用）
+frontend/demo_output/
+
+# 旧版演示录屏：webm 5.5MB 且 Safari 不支持 VP8，已被 demo.mp4 / demo.gif 取代。
+# 注意别写成 docs/demo/ 通配 —— mp4 与 gif 是 README 直接引用的正式产物，必须入库。
+docs/demo/unikb_demo.webm
+
+# TypeScript 增量构建缓存
+*.tsbuildinfo

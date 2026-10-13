@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "knowhub": {
+      "command": "python",
+      "args": ["-m", "app.mcp.server", "default"],
+      "cwd": "./",
+      "env": {
+        "PYTHONPATH": "./"
+      }
+    }
+  }
+}

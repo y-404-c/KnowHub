@@ -1,0 +1,123 @@
+"""Chroma vector store wrapper."""
+from __future__ import annotations
+
+import threading
+from pathlib import Path
+from typing import List, Optional
+
+from loguru import logger
+
+from app.core.config import settings
+
+
+# Chroma 只接受 str/int/float/bool 作为 metadata value, 传 list/dict/None 会直接抛
+# ValueError 并让整批 upsert 失败. 上游 (MetadataEnhancer 的 keywords / HyDE 字段)
+# 天然会产出 list, 所以在写入层做一次统一归一化, 避免真实上传时崩在最后一步.
+_ALLOWED_META_TYPES = (str, int, float, bool)
+
+
+def sanitize_metadata(meta: Optional[dict]) -> dict:
+    """把任意 metadata 归一化成 Chroma 可接受的标量字典。
+
+    - list/tuple/set -> 逗号拼接的字符串 (保留可读性, 便于 where 做 LIKE 式过滤)
+    - dict/其它对象  -> str()
+    - None           -> 丢弃 (Chroma 不接受 None)
+    - 顺序说明: bool 是 int 的子类, 因此会被前面的 int 分支先匹配; 二者 Chroma
+      都支持, 这里的排列顺序其实无关紧要 (按 str/int/float/bool 仅为可读性).
+    """
+    if not meta:
+        return {}
+    out: dict = {}
+    for k, v in meta.items():
+        if v is None:
+            continue
+        key = str(k)
+        if isinstance(v, _ALLOWED_META_TYPES):
+            out[key] = v
+        elif isinstance(v, (list, tuple, set)):
+            out[key] = ", ".join(str(x) for x in v if x is not None)
+        else:
+            out[key] = str(v)
+    return out
+
+
+class ChromaStore:
+    def __init__(self, persist_dir: str | None = None, collection_name: str = "default"):
+        self.persist_dir = persist_dir or settings.chroma_persist_dir
+        Path(self.persist_dir).mkdir(parents=True, exist_ok=True)
+        self.collection_name = collection_name
+        self._client = None
+        self._col = None
+        # 多线程并发请求会复用同一实例, 给写操作加锁避免并发 upsert/delete 冲突.
+        # (Chroma 0.4+ 单进程单 collection 写并发不安全, 官方建议锁.)
+        self._write_lock = threading.Lock()
+
+    def _ensure(self):
+        if self._client is None:
+            import chromadb
+            from chromadb.config import Settings as Cfg
+            self._client = chromadb.PersistentClient(path=self.persist_dir, settings=Cfg(anonymized_telemetry=False))
+            self._col = self._client.get_or_create_collection(
+                name=self.collection_name,
+                metadata={"hnsw:space": "cosine"},
+            )
+        return self._col
+
+    def add(self, ids: List[str], documents: List[str], embeddings: List[List[float]], metadatas: List[dict]):
+        col = self._ensure()
+        safe_metas = [sanitize_metadata(m) for m in (metadatas or [])]
+        with self._write_lock:
+            col.upsert(ids=ids, documents=documents, embeddings=embeddings, metadatas=safe_metas)
+        logger.info(f"Chroma upsert: {len(ids)} vectors into {self.collection_name}")
+
+    def query(self, query_embedding: List[float], top_k: int = 20, where: Optional[dict] = None):
+        col = self._ensure()
+        kwargs = {"query_embeddings": [query_embedding], "n_results": top_k}
+        if where:
+            kwargs["where"] = where
+        res = col.query(**kwargs)
+        # 返回统一结构
+        out = []
+        if not res or not res.get("ids"):
+            return out
+        for i, _id in enumerate(res["ids"][0]):
+            out.append({
+                "id": _id,
+                "document": res["documents"][0][i] if res.get("documents") else "",
+                "metadata": res["metadatas"][0][i] if res.get("metadatas") else {},
+                "distance": res["distances"][0][i] if res.get("distances") else 0.0,
+            })
+        return out
+
+    def delete(self, ids: List[str]) -> int:
+        """按 id 删除. 返回 0/实际删除数 (chroma 没有返回值, 用 count 估算)."""
+        if not ids:
+            return 0
+        col = self._ensure()
+        with self._write_lock:
+            before = col.count()
+            col.delete(ids=ids)
+            after = col.count()
+        return max(0, before - after)
+
+    def get_ids_by_doc_id(self, doc_id: str) -> List[str]:
+        """按 metadata.doc_id 查询并返回所有 chunk id."""
+        col = self._ensure()
+        try:
+            res = col.get(where={"doc_id": doc_id}, include=[])
+        except Exception:
+            return []
+        return res.get("ids", []) or []
+
+    def count(self) -> int:
+        col = self._ensure()
+        return col.count()
+
+    def reset(self):
+        col = self._ensure()
+        with self._write_lock:
+            try:
+                self._client.delete_collection(self.collection_name)
+            except Exception:
+                pass
+        self._col = None
